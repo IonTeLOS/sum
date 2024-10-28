@@ -36,51 +36,38 @@ else:
     pass  # Handle other platforms if necessary
 
 
+import logging
+from pathlib import Path
+
+
 class UpdateLogger:
     def __init__(self, executable_path, app_name="my app"):
-        """Initialize logger with a rotating log file for the specified app."""
+        """Initialize logger to log directly to a specified file."""
+        log_file = Path(executable_path).parent / 'software_updates.log'
+        
+        # Set up basic logging configuration to log directly to a file
+        logging.basicConfig(
+            filename=str(log_file),
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - APP: %(app_name)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        
+        # Create a logger instance
         self.logger = logging.getLogger(f"software_updates_{app_name}")
-        self.logger.setLevel(logging.INFO)
-
-        # Prevent adding multiple handlers to the same logger
-        if not self.logger.handlers:
-            log_file = Path(executable_path).parent / 'software_updates.log'
-            # RotatingFileHandler: 5MB per file, keep 5 backups
-            file_handler = logging.handlers.RotatingFileHandler(
-                log_file, maxBytes=5*1024*1024, backupCount=5
-            )
-            formatter = logging.Formatter(
-                '%(asctime)s - %(levelname)s - APP: %(app_name)s - %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
-            )
-            file_handler.setFormatter(formatter)
-            self.logger.addHandler(file_handler)
 
     def log_update(self, app_name, from_version, to_version, status, error=None):
         """Log update events with app name included."""
         extra = {'app_name': app_name}
 
         if status == "SUCCESS":
-            self.logger.info(
-                f"Update successful: v{from_version} → v{to_version}",
-                extra=extra
-            )
+            self.logger.info(f"Update successful: v{from_version} → v{to_version}", extra=extra)
         elif status == "FAILED":
-            self.logger.error(
-                f"Update failed: v{from_version} → v{to_version}. Error: {error}",
-                extra=extra
-            )
+            self.logger.error(f"Update failed: v{from_version} → v{to_version}. Error: {error}", extra=extra)
         elif status == "ROLLBACK":
-            self.logger.warning(
-                f"Update rolled back: v{from_version} → v{to_version}. Restored v{from_version}",
-                extra=extra
-            )
+            self.logger.warning(f"Update rolled back: v{from_version} → v{to_version}. Restored v{from_version}", extra=extra)
         elif status == "INFO":
-            self.logger.info(
-                f"{error}",  # Using 'error' field to store informational messages
-                extra=extra
-            )
-
+            self.logger.info(f"{error}", extra=extra)
 
 class UpdateDialog(QDialog):
     def __init__(self, app_name, latest_version, interactive, parent=None):
