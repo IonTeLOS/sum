@@ -719,12 +719,30 @@ def main():
                         help="Enable interactive mode with GUI (default: False)")
     parser.add_argument("-e", "--extras", help="Script text to run before replacing the executable")
 
+        from pathlib import Path
+    from PySide6.QtGui import QIcon
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    # Determine base path based on whether the script is frozen (bundled with PyInstaller) or not
+    if getattr(sys, 'frozen', False):
+        # Running in a PyInstaller bundle
+        base_path = Path(sys._MEIPASS)
+    else:
+        # Running in a normal Python environment
+        base_path = Path(__file__).parent
+
+    # Path to the icon file
+    icon_path = base_path / "update_icon.png"
+
     # Check if no arguments were provided (only the script name)
     if len(sys.argv) == 1:
         # Initialize QApplication and show the informational GUI message
         app = QApplication(sys.argv)
-        QMessageBox.information(
-            None, "SUM - Usage Information",
+        
+        # Create the QMessageBox instance
+        msg_box = QMessageBox(
+            QMessageBox.Information,
+            "SUM - Usage Information",
             "<b>SUM - Simple Update Manager</b><br><br>"
             "This application checks for updates for a specified application.<br><br>"
             "If updates are found, it downloads, installs, and restarts the updated app.<br><br>"
@@ -738,8 +756,13 @@ def main():
             "-i  or --interactive    : Enable GUI interactive mode.<br>"
             "-e  or --extras         : Script text to run before replacing the executable.<br><br>"
             '<a href="https://github.com/IonTeLOS/sum">Learn more about SUM</a>',
-            QMessageBox.Ok
         )
+        
+        # Set the icon specifically for the QMessageBox
+        msg_box.setWindowIcon(QIcon(str(icon_path)))
+        
+        # Display the message box
+        msg_box.exec()
         sys.exit(0)
 
     # Parse arguments; catch missing required arguments
