@@ -785,8 +785,7 @@ def main():
             args.current_location,
             args.url,
             app_name,
-            args.interactive,
-            extras=args.extras
+            args.interactive
         )
     except Exception as e:
         logger.log_update(app_name, args.current_version, "N/A", "FAILED", str(e))
