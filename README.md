@@ -12,6 +12,7 @@
 - **Rollback Functionality:** If an update fails, SUM automatically restores the previous version, minimizing downtime.
 - **Flexible Compatibility:** Although optimized for PySide6 apps, SUM can manage updates for other standalone applications that do not require complex packaging systems (e.g., Debian packages).
 - **Checksum Verification:** Confirms the integrity of each downloaded update by verifying its checksum before installation.
+- **Cross-Platform:** SUM works on Linux, Windows, and macOS.
 
 ## 💡 Getting Started
 
@@ -40,7 +41,7 @@ from pathlib import Path
 def check_for_updates():
     current_version = "1.0.0"
     app_location = str(Path(__file__).resolve())
-    update_url = "https://example.com/update"
+    update_url = "https://my-awesome-server.com/update"
 
     # Path to the SUM executable
     sum_executable = Path("/path/to/sum_executable")  # Update this path accordingly
@@ -66,10 +67,10 @@ Replace "/path/to/sum_executable" with the actual path to your SUM executable. T
 SUM accepts several command-line arguments to customize the update process. Here's a breakdown of each argument:
 
 -v, --current_version (required)
-The current version of the application, used to compare against the latest version available online.
+The current version of the application to be updated, used to compare against the latest version available online.
 
 -f, --current_location (required)
-The file path to the current executable, allowing SUM to locate and replace it if an update is available.
+The file path to the current executable of the app to be updated, allowing SUM to locate and replace it if an update is available.
 
 -u, --url (required)
 URL to check for the latest version and update files. Must be HTTPS unless it's a local network address.
@@ -82,6 +83,80 @@ Enables the interactive GUI mode, making the update process more user-friendly w
 
 -e, --extras
 Additional script commands to execute prior to the update process, allowing for pre-installation checks or custom configurations.
+
+Copy code
+## 📄 Update JSON Format
+
+For SUM to correctly identify and handle updates, the JSON data hosted at your update URL must adhere to the following structure:
+
+### 🗂️ JSON Structure
+
+```json
+{
+    "version": "1.0.1",
+    "platforms": {
+        "linux": {
+            "download_url": "https://example.com/download/linux/app_v1.0.1",
+            "checksum": "abc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        },
+        "windows": {
+            "download_url": "https://example.com/download/windows/app_v1.0.1.exe",
+            "checksum": "123abc456def78901234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        "darwin": {
+            "download_url": "https://example.com/download/macos/app_v1.0.1",
+            "checksum": "789def012abc34567890abcdef1234567890abcdef1234567890abcdef123456"
+        }
+    }
+}
+```
+
+📌 Field Descriptions
+version (string, required):
+The latest version of your application. This should follow semantic versioning (e.g., "1.0.1").
+
+platforms (object, required):
+An object containing platform-specific update information.
+
+linux (object, required):
+Information specific to Linux platforms.
+
+download_url (string, required):
+The direct URL to download the updated executable for Linux.
+
+checksum (string, optional):
+The SHA-256 checksum of the downloadable file to verify its integrity.
+
+📝 Example Explanation
+version: Indicates that the latest available version of the application is "1.0.1".
+
+platforms: Contains update information tailored for each supported platform.
+
+linux.download_url: Users on Linux will download the updated application from "https://my-awsome-server.com/download/linux/app_v1.0.1".
+
+linux.checksum: The SHA-256 checksum "abc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890" ensures the downloaded file hasn't been tampered with.
+
+Similarly for Windows and Darwin.
+
+🔒 Security Considerations
+HTTPS URLs: Ensure all download_url links use HTTPS to maintain secure download channels.
+
+Checksum Verification: It's highly recommended to provide the checksum field for each platform to allow SUM to verify the integrity of the downloaded files, preventing potential tampering or corruption.
+
+✅ Validation
+Before deploying your update JSON, validate its structure to ensure SUM can parse it correctly. You can use online JSON validators or tools like jq to check for syntax errors.
+
+bash
+Copy code
+jq . update.json
+Replace update.json with your actual JSON file name.
+
+🌟 Additional Notes
+Extensibility: You can add additional platforms if needed by following the same structure.
+
+Optional Fields: While checksum is optional, providing it enhances security by ensuring file integrity.
+
+Ensure that the JSON file is accessible via the specified --url when running SUM.
 
 🚀 How to Use SUM
 Once SUM is built and integrated into your application, you can invoke it as needed. Here's an example command to run SUM from your application:
@@ -104,7 +179,7 @@ from PySide6.QtWidgets import QApplication, QPushButton
 def check_for_updates():
     current_version = "1.0.0"
     app_location = str(Path(sys.argv[0]).resolve())
-    update_url = "https://example.com/update"
+    update_url = "https://my-awesome-server.com/update"
 
     # Path to the SUM executable
     sum_executable = Path("/path/to/sum_executable")  # Update this path accordingly
