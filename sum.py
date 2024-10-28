@@ -13,6 +13,7 @@ import ipaddress
 import stat
 import hashlib
 
+from packaging import version
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -34,10 +35,6 @@ elif platform.system() in ["Linux", "Darwin"]:
     import os  # Already imported, kept for clarity
 else:
     pass  # Handle other platforms if necessary
-
-
-import logging
-from pathlib import Path
 
 
 class UpdateLogger:
@@ -252,7 +249,6 @@ def check_for_updates(current_version, app_location, update_url, app_name="my ap
 
 def is_newer_version(current, latest):
     """Compare the current version to the latest version using semantic versioning."""
-    from packaging import version
     try:
         return version.parse(latest) > version.parse(current)
     except Exception as e:
@@ -705,10 +701,6 @@ def main():
     parser.add_argument("-i", "--interactive", action="store_true", default=False,
                         help="Enable interactive mode with GUI (default: False)")
     parser.add_argument("-e", "--extras", help="Script text to run before replacing the executable")
-
-        from pathlib import Path
-    from PySide6.QtGui import QIcon
-    from PySide6.QtWidgets import QApplication, QMessageBox
 
     # Determine base path based on whether the script is frozen (bundled with PyInstaller) or not
     if getattr(sys, 'frozen', False):
