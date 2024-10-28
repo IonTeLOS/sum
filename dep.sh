@@ -1,25 +1,5 @@
 #!/bin/bash
 
-# Function to check if a package is installed
-is_installed() {
-    dpkg -s "$1" &>/dev/null
-}
-
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-    # Check if pkexec is available, otherwise use x-terminal-emulator
-    if command -v pkexec &>/dev/null; then
-        pkexec bash "$0"
-        exit $?
-    elif command -v x-terminal-emulator &>/dev/null; then
-        x-terminal-emulator -e "sudo bash '$0'"
-        exit $?
-    else
-        echo "Neither pkexec nor x-terminal-emulator is available. Please run this script with sudo."
-        exit 1
-    fi
-fi
-
 # List of required packages
 required_packages=(
     "libxcb1"
@@ -48,26 +28,41 @@ required_packages=(
     "libqt5gui5"
 )
 
-# Track if any packages are missing
+# Function to check if a package is installed
+is_installed() {
+    dpkg -s "$1" &>/dev/null
+}
+
+# Track missing packages without requiring sudo initially
 missing_packages=()
 
-# Check for each required package
+# Check each required package
 for pkg in "${required_packages[@]}"; do
     if ! is_installed "$pkg"; then
         missing_packages+=("$pkg")
     fi
 done
 
-# If there are missing packages, attempt installation
+# Only request sudo if there are missing packages
 if [ ${#missing_packages[@]} -gt 0 ]; then
     echo "The following packages are missing and will be installed if available:"
     echo "${missing_packages[@]}"
-    apt update
-    for pkg in "${missing_packages[@]}"; do
-        if ! apt install -y "$pkg"; then
-            echo "Warning: Package '$pkg' could not be installed. It may not be available in the repository."
-        fi
-    done
+
+    # Check if pkexec is available for GUI prompt, fallback to terminal-based sudo
+    if command -v pkexec &>/dev/null; then
+        for pkg in "${missing_packages[@]}"; do
+            pkexec bash -c "apt update && apt install -y $pkg" || echo "Warning: Failed to install $pkg"
+        done
+    elif command -v x-terminal-emulator &>/dev/null; then
+        for pkg in "${missing_packages[@]}"; do
+            x-terminal-emulator -e "sudo bash -c 'apt update && apt install -y $pkg'" || echo "Warning: Failed to install $pkg"
+        done
+    else
+        echo "Neither pkexec nor x-terminal-emulator is available. Please install missing packages manually."
+        exit 1
+    fi
+else
+    echo "All required packages are already installed."
 fi
 
 # Run the application
