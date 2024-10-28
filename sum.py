@@ -3,6 +3,7 @@ import requests
 import platform
 import tempfile
 import subprocess
+from subprocess import call
 import logging
 from datetime import datetime
 from argparse import ArgumentParser
@@ -695,6 +696,13 @@ def get_temp_dir():
 
 
 def main():
+    # Run dep.sh to check and install missing dependencies
+    dep_script = Path(__file__).parent / 'dep.sh'
+    if dep_script.exists():
+        result = call(["/bin/bash", str(dep_script)])
+        if result != 0:
+            print("Warning: Some dependencies may not have been installed correctly.")
+            
     parser = ArgumentParser(
         description="SUM - a Simple Update Manager",
         add_help=True
