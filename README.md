@@ -168,8 +168,7 @@ In interactive mode, SUM will prompt the user with a graphical dialog, providing
 
 Example: Calling SUM from a PySide6 Application
 Here's a more concrete example of how a PySide6 application can call SUM to handle its updates:
-```
-python
+```python
 import subprocess
 import sys
 from pathlib import Path
