@@ -146,10 +146,10 @@ Checksum Verification: It's highly recommended to provide the checksum field for
 ✅ Validation
 Before deploying your update JSON, validate its structure to ensure SUM can parse it correctly. You can use online JSON validators or tools like jq to check for syntax errors.
 
-bash
-Copy code
+```bash
 jq . update.json
-Replace update.json with your actual JSON file name.
+## Replace update.json with your actual JSON file name
+```
 
 🌟 Additional Notes
 Extensibility: You can add additional platforms if needed by following the same structure.
