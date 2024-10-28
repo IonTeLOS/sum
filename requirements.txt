@@ -1,0 +1,4 @@
+requests
+psutil
+packaging
+PySide6
