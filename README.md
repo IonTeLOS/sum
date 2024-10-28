@@ -168,9 +168,8 @@ In interactive mode, SUM will prompt the user with a graphical dialog, providing
 
 Example: Calling SUM from a PySide6 Application
 Here's a more concrete example of how a PySide6 application can call SUM to handle its updates:
-
+```
 python
-Copy code
 import subprocess
 import sys
 from pathlib import Path
@@ -202,6 +201,8 @@ if __name__ == "__main__":
     window.clicked.connect(check_for_updates)
     window.show()
     sys.exit(app.exec())
+```
+
 In this example:
 
 Button Trigger: A button labeled "Check for Updates" is created. When clicked, it triggers the check_for_updates function.
@@ -214,6 +215,7 @@ Supported Platforms
 Linux (Debian 11+)
 Windows
 macOS
+
 🛡 Security Considerations
 HTTPS Enforcement: SUM ensures that update URLs use HTTPS to maintain secure communication, except for local network addresses.
 Checksum Verification: Each downloaded update is verified using SHA-256 checksums to ensure file integrity and prevent tampering.
@@ -224,6 +226,7 @@ dep.sh Overview
 Checks for Required Libraries: Ensures that all necessary system libraries for running PySide6 applications are installed.
 Automatic Installation: Installs missing dependencies using apt with elevated permissions.
 Graceful Handling: Continues to run the application even if some dependencies fail to install, logging warnings accordingly.
+
 📈 Logging and Monitoring
 SUM maintains a rotating log file (software_updates.log) located in the same directory as the executable. This log records all update events, including successes, failures, and any rollback actions taken.
 
