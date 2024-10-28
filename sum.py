@@ -1,20 +1,21 @@
 import sys
-import requests
-import platform
-import tempfile
+import os
 import subprocess
-from subprocess import call
-import logging
+import tempfile
+import shutil
+import hashlib
 from datetime import datetime
 from argparse import ArgumentParser
 from urllib.parse import urlparse
-import psutil
+import traceback
+import platform
 import ipaddress
-import stat
-import hashlib
 
+import requests
+import psutil
 from packaging import version
 from pathlib import Path
+from subprocess import call
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -32,39 +33,22 @@ from PySide6.QtGui import QIcon
 if platform.system() == "Windows":
     import ctypes
 elif platform.system() in ["Linux", "Darwin"]:
-    import os  # Already imported, kept for clarity
+    pass  # os is already imported
 else:
     pass  # Handle other platforms if necessary
 
 
-class UpdateLogger:
-    def __init__(self, executable_path, app_name="my app"):
-        """Initialize logger to log directly to a specified file."""
-        log_file = Path(executable_path).parent / 'software_updates.log'
-        
-        # Set up basic logging configuration to log directly to a file
-        logging.basicConfig(
-            filename=str(log_file),
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - APP: %(app_name)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        
-        # Create a logger instance
-        self.logger = logging.getLogger(f"software_updates_{app_name}")
+def append_log(app_name, from_version, to_version):
+    """Append a log entry to ~/.sum.txt with timestamp, app_name, and version info."""
+    log_file = Path.home() / '.sum.txt'
+    log_entry = f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {app_name} updated from v{from_version} to v{to_version}\n"
+    try:
+        with open(log_file, 'a') as f:
+            f.write(log_entry)
+    except Exception as e:
+        # If logging fails, notify the user but do not interrupt the update process
+        QMessageBox.warning(None, "Logging Failed", f"Failed to write to log file: {e}")
 
-    def log_update(self, app_name, from_version, to_version, status, error=None):
-        """Log update events with app name included."""
-        extra = {'app_name': app_name}
-
-        if status == "SUCCESS":
-            self.logger.info(f"Update successful: v{from_version} → v{to_version}", extra=extra)
-        elif status == "FAILED":
-            self.logger.error(f"Update failed: v{from_version} → v{to_version}. Error: {error}", extra=extra)
-        elif status == "ROLLBACK":
-            self.logger.warning(f"Update rolled back: v{from_version} → v{to_version}. Restored v{from_version}", extra=extra)
-        elif status == "INFO":
-            self.logger.info(f"{error}", extra=extra)
 
 class UpdateDialog(QDialog):
     def __init__(self, app_name, latest_version, interactive, parent=None):
@@ -159,7 +143,7 @@ class DownloadThread(QThread):
                 self.download_complete.emit(str(self.file_path), checksum)
         except Exception as e:
             self.download_complete.emit(None, None)
-            print(f"Error during download: {e}")
+            QMessageBox.critical(None, "Download Error", f"An error occurred during download: {e}")
 
 
 def check_url_connection(url):
@@ -189,15 +173,11 @@ def validate_url(url):
     return url
 
 
-def check_for_updates(current_version, app_location, update_url, app_name="my app", interactive=True):
+def check_for_updates(current_version, app_location, update_url, app_name="my app", interactive=True, extras=None):
     """Check for updates and initiate download and installation if a new version is found."""
-    logger = UpdateLogger(app_location, app_name)
-
     # First, check for connectivity to the update URL
     if not check_url_connection(update_url):
-        logger.log_update(app_name, current_version, "N/A", "FAILED", f"No connection to {update_url}")
-        if interactive:
-            QMessageBox.warning(None, "Connection Error", f"Unable to connect to update server: {update_url}")
+        QMessageBox.warning(None, "Connection Error", f"Unable to connect to update server: {update_url}")
         return
 
     try:
@@ -209,9 +189,7 @@ def check_for_updates(current_version, app_location, update_url, app_name="my ap
         platform_key = platform.system().lower()
 
         if platform_key not in latest_info.get("platforms", {}):
-            logger.log_update(app_name, current_version, "N/A", "FAILED", f"No update information for platform: {platform_key}")
-            if interactive:
-                QMessageBox.information(None, "No Update", f"No update available for {app_name} on your platform.")
+            QMessageBox.information(None, "No Update", f"No update available for {app_name} on your platform.")
             return
 
         latest_version = latest_info["version"]
@@ -229,22 +207,19 @@ def check_for_updates(current_version, app_location, update_url, app_name="my ap
                     QMessageBox.Yes | QMessageBox.No
                 )
                 if reply == QMessageBox.No:
-                    return
+                    relaunch_app(app_location)
+                    sys.exit(0)
 
-            perform_update_with_gui(app_name, current_version, latest_version, download_url, expected_checksum, interactive, logger, app_location)
+            perform_update_with_gui(app_name, current_version, latest_version, download_url, expected_checksum, interactive, app_location, extras)
         else:
-            logger.log_update(app_name, current_version, latest_version, "INFO", "Current version is up-to-date.")
-            if interactive:
-                QMessageBox.information(None, "No Update", f"{app_name} is already up-to-date.")
+            QMessageBox.information(None, "No Update", f"{app_name} is already up-to-date.")
 
     except ValueError as ve:
-        logger.log_update(app_name, current_version, "N/A", "FAILED", str(ve))
-        if interactive:
-            QMessageBox.critical(None, "Security Error", str(ve))
+        QMessageBox.critical(None, "Security Error", str(ve))
     except Exception as e:
-        logger.log_update(app_name, current_version, "N/A", "FAILED", str(e))
-        if interactive:
-            QMessageBox.critical(None, "Update Error", f"Failed to check for updates: {e}")
+        # Log the full stack trace for debugging
+        error_message = f"Failed to check for updates: {e}\n{traceback.format_exc()}"
+        QMessageBox.critical(None, "Update Error", f"Failed to check for updates: {e}\nSee logs for more details.")
 
 
 def is_newer_version(current, latest):
@@ -252,47 +227,51 @@ def is_newer_version(current, latest):
     try:
         return version.parse(latest) > version.parse(current)
     except Exception as e:
-        print(f"Version comparison error: {e}")
+        QMessageBox.critical(None, "Version Comparison Error", f"Error comparing versions: {e}")
         return False
 
 
-def perform_update_with_gui(app_name, current_version, latest_version, download_url, expected_checksum, interactive, logger, app_location):
+def perform_update_with_gui(app_name, current_version, latest_version, download_url, expected_checksum, interactive, app_location, extras=None):
     """Handle the update process with a GUI."""
     if interactive:
         app = QApplication.instance() or QApplication(sys.argv)
 
         dialog = UpdateDialog(app_name, latest_version, interactive)
-        download_thread = DownloadThread(download_url, expected_checksum)
 
+        def on_download_complete(path, checksum):
+            if path and (not expected_checksum or checksum == expected_checksum):
+                dialog.enable_update_button()
+            else:
+                dialog.reject()
+                if expected_checksum and checksum != expected_checksum:
+                    QMessageBox.critical(None, "Checksum Mismatch", "The downloaded file's checksum does not match the expected value.")
+                relaunch_app(app_location)
+                sys.exit(0)
+
+        download_thread = DownloadThread(download_url, expected_checksum)
         download_thread.progress_signal.connect(dialog.set_progress)
-        download_thread.download_complete.connect(lambda path, checksum: dialog.enable_update_button() if path and (not expected_checksum or checksum == expected_checksum) else dialog.reject())
+        download_thread.download_complete.connect(on_download_complete)
 
         download_thread.start()
 
         if dialog.exec() == QDialog.Accepted:
             if download_thread.file_path:
-                # Verify checksum if provided
-                if expected_checksum:
-                    if download_thread.download_complete.emit.__self__.expected_checksum:
-                        # Already checked via signal
-                        pass
-                    else:
-                        # Additional verification if needed
-                        pass
-
                 success = replace_and_restart(
                     app_location,
                     download_thread.file_path,
                     current_version,
                     latest_version,
                     app_name,
-                    interactive
+                    interactive,
+                    extras
                 )
                 if success:
+                    append_log(app_name, current_version, latest_version)
                     QMessageBox.information(None, "Update Installed", f"{app_name} has been updated and restarted.")
                 else:
-                    show_error_message(app_name)
-            sys.exit()
+                    QMessageBox.critical(None, "Update Failed", "The update failed and the application has been relaunched.")
+            relaunch_app(app_location)
+            sys.exit(0)
     else:
         # Non-interactive mode: Download and replace without GUI
         download_thread = DownloadThread(download_url, expected_checksum)
@@ -303,12 +282,20 @@ def perform_update_with_gui(app_name, current_version, latest_version, download_
         if download_thread.file_path:
             # Verify checksum if provided
             if expected_checksum:
-                if download_thread.file_path and download_thread.download_complete.emit.__self__.expected_checksum:
-                    # Already checked via signal
-                    pass
-                else:
-                    # Additional verification if needed
-                    pass
+                sha256_hash = hashlib.sha256()
+                try:
+                    with open(download_thread.file_path, "rb") as f:
+                        for byte_block in iter(lambda: f.read(4096), b""):
+                            sha256_hash.update(byte_block)
+                    calculated_checksum = sha256_hash.hexdigest()
+                    if calculated_checksum != expected_checksum:
+                        QMessageBox.critical(None, "Checksum Mismatch", "The downloaded file's checksum does not match the expected value.")
+                        relaunch_app(app_location)
+                        sys.exit(0)
+                except Exception as e:
+                    QMessageBox.critical(None, "Checksum Error", f"Failed to verify checksum: {e}")
+                    relaunch_app(app_location)
+                    sys.exit(0)
 
             success = replace_and_restart(
                 app_location,
@@ -316,19 +303,30 @@ def perform_update_with_gui(app_name, current_version, latest_version, download_
                 current_version,
                 latest_version,
                 app_name,
-                interactive
+                interactive,
+                extras
             )
             if success:
-                print(f"{app_name} has been updated and restarted.")
+                append_log(app_name, current_version, latest_version)
+                QMessageBox.information(None, "Update Installed", f"{app_name} has been updated and restarted.")
             else:
-                show_error_message(app_name)
-            sys.exit()
+                QMessageBox.critical(None, "Update Failed", "The update failed and the application has been relaunched.")
+            relaunch_app(app_location)
+            sys.exit(0)
 
 
 def is_directory_write_protected(path):
     """Check if the directory containing the given path is write-protected."""
     directory = Path(path).parent
-    return not os.access(directory, os.W_OK)
+    writable = os.access(directory, os.W_OK)
+    return not writable
+
+
+def is_in_system_directory(path):
+    """Check if the path is within system directories that typically require elevated privileges."""
+    system_dirs = [Path("/usr"), Path("/opt"), Path("/etc")]
+    executable_path = Path(path).resolve()
+    return any(executable_path.is_relative_to(sys_dir) for sys_dir in system_dirs)
 
 
 def is_current_process_elevated():
@@ -345,12 +343,26 @@ def is_current_process_elevated():
 
 def request_elevated_permissions():
     """Request elevated permissions if required by the system."""
+    if is_current_process_elevated():
+        QMessageBox.critical(None, "Already Elevated", "The updater is already running with elevated permissions.")
+        sys.exit(1)
+
     if platform.system() == "Linux":
         app = QApplication.instance() or QApplication(sys.argv)
         QMessageBox.information(None, "Permission Required", "Please enter your sudo password to proceed.")
 
         try:
-            subprocess.check_call(['sudo', sys.executable] + sys.argv)
+            # Preserve DISPLAY and XAUTHORITY for GUI access
+            display = os.environ.get("DISPLAY", ":0")
+            xauthority = os.environ.get("XAUTHORITY", os.path.expanduser("~/.Xauthority"))
+            # Pass all arguments to avoid duplication
+            subprocess.check_call([
+                'pkexec',
+                'env',
+                f'DISPLAY={display}',
+                f'XAUTHORITY={xauthority}',
+                sys.executable
+            ] + sys.argv[1:])
         except subprocess.CalledProcessError:
             QMessageBox.critical(None, "Permission Denied", "Failed to obtain elevated permissions. Run as root.")
             sys.exit(1)
@@ -361,7 +373,11 @@ def request_elevated_permissions():
         QMessageBox.information(None, "Permission Required", "Administrator permissions are required. Click OK to proceed.")
 
         try:
-            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+            # Enclose each argument in quotes to handle spaces
+            args = ' '.join([f'"{arg}"' for arg in sys.argv[1:]])
+            ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", sys.executable, args, None, 1
+            )
         except Exception as e:
             QMessageBox.critical(None, "Permission Denied", f"Failed to obtain elevated permissions: {e}")
             sys.exit(1)
@@ -369,52 +385,21 @@ def request_elevated_permissions():
 
 
 def terminate_processes(target_executable, timeout=5):
-    """Terminate all instances of the specified executable, requesting elevation if needed."""
-    found = False
+    """Terminate all instances of the specified executable."""
     try:
         for proc in psutil.process_iter(attrs=['pid', 'exe']):
-            if proc.info['exe'] == target_executable:
-                found = True
-                # Check if the current process is elevated
-                if not is_current_process_elevated():
-                    # Prompt for elevated permissions
-                    app = QApplication.instance() or QApplication(sys.argv)
-                    response = QMessageBox.question(
-                        None, "Elevated Permissions Required",
-                        "Terminating this application requires elevated permissions.\n\nDo you want to continue with elevated permissions?",
-                        QMessageBox.Yes | QMessageBox.No
-                    )
-                    if response == QMessageBox.Yes:
-                        request_elevated_permissions()
-                        return True  # Restart with elevated privileges and terminate upon re-entry
-                    else:
-                        QMessageBox.critical(None, "Operation Canceled", "Cannot terminate the application without elevated permissions.")
-                        return False
-
-                # Terminate the process
+            if proc.info['exe'] and Path(proc.info['exe']).resolve() == Path(target_executable).resolve():
                 proc.terminate()
                 try:
                     proc.wait(timeout=timeout)
-                    print(f"Process {proc.info['pid']} terminated gracefully.")
                 except psutil.TimeoutExpired:
-                    print(f"Process {proc.info['pid']} did not terminate within {timeout} seconds. Forcing termination.")
-                    proc.kill()  # Force termination if process doesn't respond
-                except psutil.NoSuchProcess:
-                    print(f"Process {proc.info['pid']} was already terminated.")
-
-        if not found:
-            print(f"No running processes found for {target_executable}.")
-            return True  # Return True if no instances were found, as this is not a failure
-    except (psutil.AccessDenied, psutil.Error) as e:
-        print(f"An error occurred while terminating processes: {e}")
-        return False
-
-    return True  # Return True if termination completed successfully for found instances
+                    proc.kill()
+    except Exception as e:
+        QMessageBox.warning(None, "Termination Warning", f"An error occurred while terminating processes: {e}")
 
 
 def replace_and_restart(target_executable, new_executable, current_version, latest_version, app_name="my app", interactive=True, extras=None):
     """Replace the specified executable with the new version and restart it."""
-
     temp_dir = get_temp_dir()
     os.makedirs(temp_dir, exist_ok=True)  # Ensure temp directory exists
 
@@ -422,7 +407,6 @@ def replace_and_restart(target_executable, new_executable, current_version, late
     backup_location = Path(temp_dir) / (Path(target_executable).name + ".backup")
     update_script = None
     extras_script_file_path = None
-    logger = UpdateLogger(target_executable, app_name)
 
     try:
         # Step 1: Run the extras script if provided (before making any changes)
@@ -445,110 +429,49 @@ def replace_and_restart(target_executable, new_executable, current_version, late
                 else:
                     subprocess.check_call(["bash", extras_script_file_path])
             except subprocess.CalledProcessError as e:
-                logger.log_update(app_name, current_version, latest_version, "FAILED", f"Extras script failed: {e}")
-                if interactive:
-                    QMessageBox.critical(None, "Error", f"Extras script failed: {e}")
+                QMessageBox.critical(None, "Error", f"Extras script failed: {e}")
+                relaunch_app(target_executable)
                 return False  # Exit early due to extras script failure
 
         # Step 2: Terminate the target application if running
-        if not terminate_processes(target_executable, timeout=5):
-            logger.log_update(app_name, current_version, latest_version, "FAILED", "Unable to terminate the application.")
-            if interactive:
-                QMessageBox.critical(None, "Error", "Unable to terminate the application.")
-            return False  # Exit if unable to stop the application
+        terminate_processes(target_executable)
 
         # Step 3: Check if the directory of target_executable is write-protected
-        if is_directory_write_protected(target_executable):
-            if interactive:
-                response = QMessageBox.question(
-                    None, "Elevated Permissions Required",
-                    "Replacing this application requires elevated permissions to modify its directory.\n\nDo you want to continue?",
-                    QMessageBox.Yes | QMessageBox.No
-                )
-                if response == QMessageBox.Yes:
-                    request_elevated_permissions()
-                    return  # The script will restart with elevated privileges
-                else:
-                    QMessageBox.critical(None, "Operation Canceled", "The operation was canceled by the user.")
-                    return False  # Exit if user denies elevation
-            else:
-                # Non-interactive mode cannot proceed without permissions
-                logger.log_update(app_name, current_version, latest_version, "FAILED", "Directory is write-protected and cannot obtain elevated permissions.")
-                return False
+        if is_directory_write_protected(target_executable) and is_in_system_directory(target_executable):
+            request_elevated_permissions()
+            return False  # The script will restart with elevated privileges
 
         # Step 4: Backup the target executable to a writable location
         try:
             target_path = Path(target_executable)
             backup_path = backup_location
-            target_path.rename(backup_path)
+            shutil.move(str(target_path), str(backup_path))
         except Exception as e:
-            logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to backup executable: {e}")
-            if interactive:
-                QMessageBox.critical(None, "Error", f"Failed to backup executable: {e}")
+            QMessageBox.critical(None, "Error", f"Failed to backup executable: {e}")
+            relaunch_app(target_executable)
             return False  # Exit if backup fails
 
         # Step 5: Move the new executable in place
         try:
             new_executable_path = Path(new_executable)
             target_path = Path(target_executable)
-            new_executable_path.rename(target_path)
+            shutil.move(str(new_executable_path), str(target_path))
         except Exception as e:
-            logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to replace executable: {e}")
+            QMessageBox.critical(None, "Error", f"Failed to replace executable: {e}")
             # Attempt to restore from backup
             try:
-                backup_location.rename(target_executable)
-                logger.log_update(app_name, current_version, latest_version, "ROLLBACK", "Restored from backup due to replacement failure.")
-                # Re-run extras script for rollback
-                if extras:
-                    try:
-                        if platform.system() == "Windows":
-                            subprocess.check_call([extras_script_file_path], shell=True)
-                        else:
-                            subprocess.check_call(["bash", extras_script_file_path])
-                    except subprocess.CalledProcessError as rollback_e:
-                        logger.log_update(app_name, current_version, latest_version, "FAILED", f"Rollback extras script failed: {rollback_e}")
-                        if interactive:
-                            QMessageBox.critical(None, "Error", f"Rollback extras script failed: {rollback_e}")
+                shutil.move(str(backup_location), str(target_executable))
             except Exception as restore_error:
-                logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to restore backup: {restore_error}")
-                if interactive:
-                    QMessageBox.critical(None, "Error", f"Failed to replace executable and restore backup: {restore_error}")
-            if interactive:
-                QMessageBox.critical(None, "Error", f"Failed to replace executable: {e}\nBackup restored.")
+                QMessageBox.critical(None, "Error", f"Failed to restore backup: {restore_error}")
+            relaunch_app(target_executable)
             return False  # Exit if replacement fails
 
-        # Step 6: Adjust permissions to ensure standard user access
+        # Step 6: Adjust permissions to ensure standard user access (only on Unix-like systems)
         try:
-            if platform.system() == "Windows":
-                # Using stat constants to set read, write, and execute permissions
-                target_path.chmod(stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
-            elif platform.system() in ["Linux", "Darwin"]:
-                # Setting permissions to 755 (rwxr-xr-x)
+            if platform.system() in ["Linux", "Darwin"]:
                 target_path.chmod(0o755)
         except Exception as e:
-            logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to set permissions: {e}")
-            # Attempt to restore from backup
-            try:
-                backup_location.rename(target_executable)
-                logger.log_update(app_name, current_version, latest_version, "ROLLBACK", "Restored from backup due to permission setting failure.")
-                # Re-run extras script for rollback
-                if extras:
-                    try:
-                        if platform.system() == "Windows":
-                            subprocess.check_call([extras_script_file_path], shell=True)
-                        else:
-                            subprocess.check_call(["bash", extras_script_file_path])
-                    except subprocess.CalledProcessError as rollback_e:
-                        logger.log_update(app_name, current_version, latest_version, "FAILED", f"Rollback extras script failed: {rollback_e}")
-                        if interactive:
-                            QMessageBox.critical(None, "Error", f"Rollback extras script failed: {rollback_e}")
-            except Exception as restore_error:
-                logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to restore backup after permission setting failure: {restore_error}")
-                if interactive:
-                    QMessageBox.critical(None, "Error", f"Failed to set permissions and restore backup: {restore_error}")
-            if interactive:
-                QMessageBox.critical(None, "Error", f"Failed to set permissions: {e}\nBackup restored.")
-            return False  # Exit if permission setting fails
+            QMessageBox.warning(None, "Permission Warning", f"Failed to set permissions: {e}")
 
         # Step 7: Create the update script to restart the application
         try:
@@ -578,28 +501,13 @@ def replace_and_restart(target_executable, new_executable, current_version, late
             if platform.system() in ["Linux", "Darwin"]:
                 update_script.chmod(0o755)
         except Exception as e:
-            logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to create update script: {e}")
+            QMessageBox.critical(None, "Error", f"Failed to create update script: {e}")
             # Attempt to restore from backup
             try:
-                backup_location.rename(target_executable)
-                logger.log_update(app_name, current_version, latest_version, "ROLLBACK", "Restored from backup due to update script creation failure.")
-                # Re-run extras script for rollback
-                if extras:
-                    try:
-                        if platform.system() == "Windows":
-                            subprocess.check_call([extras_script_file_path], shell=True)
-                        else:
-                            subprocess.check_call(["bash", extras_script_file_path])
-                    except subprocess.CalledProcessError as rollback_e:
-                        logger.log_update(app_name, current_version, latest_version, "FAILED", f"Rollback extras script failed: {rollback_e}")
-                        if interactive:
-                            QMessageBox.critical(None, "Error", f"Rollback extras script failed: {rollback_e}")
+                shutil.move(str(backup_location), str(target_executable))
             except Exception as restore_error:
-                logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to restore backup after script creation failure: {restore_error}")
-                if interactive:
-                    QMessageBox.critical(None, "Error", f"Failed to create update script and restore backup: {restore_error}")
-            if interactive:
-                QMessageBox.critical(None, "Error", f"Failed to create update script: {e}\nBackup restored.")
+                QMessageBox.critical(None, "Error", f"Failed to restore backup after script creation failure: {restore_error}")
+            relaunch_app(target_executable)
             return False  # Exit if script creation fails
 
         # Step 8: Run the update script to restart the application
@@ -609,38 +517,17 @@ def replace_and_restart(target_executable, new_executable, current_version, late
             else:
                 subprocess.Popen(["sh", str(update_script)])
         except Exception as e:
-            logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to run update script: {e}")
+            QMessageBox.critical(None, "Error", f"Failed to run update script: {e}")
             # Attempt to restore from backup
             try:
-                backup_location.rename(target_executable)
-                logger.log_update(app_name, current_version, latest_version, "ROLLBACK", "Restored from backup due to update script execution failure.")
-                # Re-run extras script for rollback
-                if extras:
-                    try:
-                        if platform.system() == "Windows":
-                            subprocess.check_call([extras_script_file_path], shell=True)
-                        else:
-                            subprocess.check_call(["bash", extras_script_file_path])
-                    except subprocess.CalledProcessError as rollback_e:
-                        logger.log_update(app_name, current_version, latest_version, "FAILED", f"Rollback extras script failed: {rollback_e}")
-                        if interactive:
-                            QMessageBox.critical(None, "Error", f"Rollback extras script failed: {rollback_e}")
+                shutil.move(str(backup_location), str(target_executable))
             except Exception as restore_error:
-                logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to restore backup after script execution failure: {restore_error}")
-                if interactive:
-                    QMessageBox.critical(None, "Error", f"Failed to run update script and restore backup: {restore_error}")
-            if interactive:
-                QMessageBox.critical(None, "Error", f"Failed to run update script: {e}\nBackup restored.")
+                QMessageBox.critical(None, "Error", f"Failed to restore backup after script execution failure: {restore_error}")
+            relaunch_app(target_executable)
             return False  # Exit if script execution fails
 
         # Step 9: Log successful update
-        logger.log_update(app_name, current_version, latest_version, "SUCCESS")
-        try:
-            backup_location.unlink()  # Remove backup as it's no longer needed
-        except Exception as e:
-            logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to remove backup: {e}")
-            if interactive:
-                QMessageBox.warning(None, "Warning", f"Failed to remove backup: {e}")
+        append_log(app_name, current_version, latest_version)
 
         return True  # Indicate success
 
@@ -649,14 +536,14 @@ def replace_and_restart(target_executable, new_executable, current_version, late
         if update_script and update_script.exists():
             try:
                 update_script.unlink()
-            except Exception as e:
-                logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to remove update script: {e}")
+            except Exception:
+                pass  # Ignore cleanup errors
 
         if extras and extras_script_file_path and Path(extras_script_file_path).exists():
             try:
                 Path(extras_script_file_path).unlink()
-            except Exception as e:
-                logger.log_update(app_name, current_version, latest_version, "FAILED", f"Failed to remove extras script: {e}")
+            except Exception:
+                pass  # Ignore cleanup errors
 
 
 def show_error_message(app_name):
@@ -675,17 +562,30 @@ def get_temp_dir():
     elif platform.system() == "Darwin":
         return Path("/tmp") if Path("/tmp").exists() and os.access("/tmp", os.W_OK) else Path.home() / "Library" / "Application Support" / "tmp"
     else:
-        return Path("/tmp") if Path("/tmp").exists() and os.access("/tmp", os.W_OK) else Path.home() / ".local" / "tmp"
+        tmp_path = Path("/tmp")
+        return tmp_path if tmp_path.exists() and os.access(tmp_path, os.W_OK) else Path.home() / ".local" / "tmp"
+
+
+def is_in_system_directory(path):
+    """Check if the path is within system directories that typically require elevated privileges."""
+    system_dirs = [Path("/usr"), Path("/opt"), Path("/etc")]
+    executable_path = Path(path).resolve()
+    return any(executable_path.is_relative_to(sys_dir) for sys_dir in system_dirs)
+
+
+def relaunch_app(app_location):
+    """Relaunch the application."""
+    try:
+        subprocess.Popen([app_location], shell=False)
+    except Exception as e:
+        QMessageBox.critical(None, "Relaunch Error", f"Failed to relaunch the application: {e}")
 
 
 def main():
-    # Run dep.sh to check and install missing dependencies
-    dep_script = Path(__file__).parent / 'dep.sh'
-    if dep_script.exists():
-        result = call(["/bin/bash", str(dep_script)])
-        if result != 0:
-            print("Warning: Some dependencies may not have been installed correctly.")
-            
+    # Initialize QApplication early if interactive
+    interactive = False  # Default to non-interactive
+    app = None
+
     parser = ArgumentParser(
         description="SUM - a Simple Update Manager",
         add_help=True
@@ -769,14 +669,10 @@ def main():
     else:
         app_name = Path(args.current_location).stem  # Using pathlib for better path handling
 
-    # Initialize logger with the determined app_name
-    logger = UpdateLogger(args.current_location, app_name)
-
     # Initialize QApplication if in interactive mode and not already created
     if args.interactive and not QApplication.instance():
         app = QApplication(sys.argv)
-    else:
-        app = None
+        interactive = True
 
     try:
         # Run the update check
@@ -785,12 +681,12 @@ def main():
             args.current_location,
             args.url,
             app_name,
-            args.interactive
+            args.interactive,
+            extras=args.extras
         )
     except Exception as e:
-        logger.log_update(app_name, args.current_version, "N/A", "FAILED", str(e))
-        if args.interactive:
-            QMessageBox.critical(None, "Error", f"Update process failed: {e}")
+        QMessageBox.critical(None, "Error", f"Update process failed: {e}")
+        relaunch_app(args.current_location)
         sys.exit(1)
 
     # Start the app event loop if QApplication was initialized
